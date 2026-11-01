@@ -11,14 +11,14 @@ permissions:
 
 jobs:
   build:
-    name: Create APK
+    name: Create Driver Pro APK
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -27,7 +27,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Install Android SDK
+      - name: Install Android SDK packages
         run: |
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
@@ -42,10 +42,25 @@ jobs:
             exit 1
           fi
 
+          echo "ZIP found: $ZIP"
+
           mkdir -p extracted
           unzip -q "$ZIP" -d extracted
 
-          echo "ZIP extracted successfully"
+      - name: Inspect Project Files
+        run: |
+          echo "===== PROJECT STRUCTURE ====="
+          find extracted -maxdepth 6 -type f | sort | head -n 200
+
+          echo "===== GRADLE FILES ====="
+          find extracted -type f \( \
+            -name "gradlew" -o \
+            -name "settings.gradle" -o \
+            -name "settings.gradle.kts" -o \
+            -name "gradle-wrapper.properties" -o \
+            -name "build.gradle" -o \
+            -name "build.gradle.kts" \
+          \)
 
       - name: Locate Android Project
         run: |
@@ -57,8 +72,7 @@ jobs:
           \) | grep '/app/' | head -n 1)
 
           if [ -z "$GRADLE_FILE" ]; then
-            echo "ERROR: Android project not found"
-            find extracted -maxdepth 4 -type f
+            echo "ERROR: app Gradle file not found"
             exit 1
           fi
 
@@ -66,27 +80,32 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
+          echo "Project found: $PROJECT_DIR"
+
       - name: Build APK
         run: |
           set -e
 
-          if [ ! -f "$PROJECT_DIR/gradlew" ]; then
-            echo "ERROR: Gradle wrapper missing"
+          if [ -f "$PROJECT_DIR/gradlew" ]; then
+            chmod +x "$PROJECT_DIR/gradlew"
+            "$PROJECT_DIR/gradlew" \
+              -p "$PROJECT_DIR" \
+              assembleDebug \
+              --stacktrace
+
+          elif [ -f "$PROJECT_DIR/gradle/wrapper/gradle-wrapper.properties" ]; then
+            echo "Gradle wrapper script missing."
+            exit 1
+
+          else
+            echo "Gradle wrapper not found."
+            echo "Waiting for project inspection."
             exit 1
           fi
 
-          chmod +x "$PROJECT_DIR/gradlew"
-
-          "$PROJECT_DIR/gradlew" \
-            -p "$PROJECT_DIR" \
-            assembleDebug \
-            --stacktrace
-
-      - name: Prepare APK
+      - name: Find APK
         run: |
           set -e
-
-          mkdir -p output
 
           APK=$(find "$PROJECT_DIR" \
             -type f \
@@ -98,9 +117,10 @@ jobs:
             exit 1
           fi
 
+          mkdir -p output
           cp "$APK" output/Driver-Pro.apk
 
-      - name: Upload APK
+      - name: Upload Driver Pro APK
         uses: actions/upload-artifact@v4
         with:
           name: Driver-Pro-APK
