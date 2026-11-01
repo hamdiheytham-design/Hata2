@@ -15,115 +15,71 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Install Android SDK packages
+      - name: Install SDK
         run: |
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Find and Extract ZIP
+      - name: Extract ZIP
         run: |
           set -e
-
-          ZIP=$(find . -maxdepth 2 -type f -iname "*.zip" | head -n 1)
+          ZIP=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ERROR: ZIP file not found"
+            echo "ZIP NOT FOUND"
             exit 1
           fi
-
-          echo "ZIP found: $ZIP"
 
           mkdir -p extracted
           unzip -q "$ZIP" -d extracted
 
-      - name: Inspect Project Files
-        run: |
-          echo "===== PROJECT STRUCTURE ====="
-          find extracted -maxdepth 6 -type f | sort | head -n 200
-
-          echo "===== GRADLE FILES ====="
-          find extracted -type f \( \
-            -name "gradlew" -o \
-            -name "settings.gradle" -o \
-            -name "settings.gradle.kts" -o \
-            -name "gradle-wrapper.properties" -o \
-            -name "build.gradle" -o \
-            -name "build.gradle.kts" \
-          \)
-
-      - name: Locate Android Project
+      - name: Locate Project
         run: |
           set -e
 
-          GRADLE_FILE=$(find extracted -type f \( \
-            -name "build.gradle" -o \
-            -name "build.gradle.kts" \
-          \) | grep '/app/' | head -n 1)
+          SETTINGS=$(find extracted -name settings.gradle -o -name settings.gradle.kts | head -n 1)
 
-          if [ -z "$GRADLE_FILE" ]; then
-            echo "ERROR: app Gradle file not found"
+          if [ -z "$SETTINGS" ]; then
+            echo "ERROR: settings.gradle missing"
+            find extracted -maxdepth 4 -type f
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$(dirname "$GRADLE_FILE")")
+          PROJECT_DIR=$(dirname "$SETTINGS")
+
+          if [ ! -f "$PROJECT_DIR/app/build.gradle" ] && [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
+            echo "ERROR: app module missing"
+            find "$PROJECT_DIR" -maxdepth 5 -type f
+            exit 1
+          fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-          echo "Project found: $PROJECT_DIR"
 
       - name: Build APK
         run: |
           set -e
+          gradle -p "$PROJECT_DIR" --no-daemon assembleDebug --stacktrace
 
-          if [ -f "$PROJECT_DIR/gradlew" ]; then
-            chmod +x "$PROJECT_DIR/gradlew"
-            "$PROJECT_DIR/gradlew" \
-              -p "$PROJECT_DIR" \
-              assembleDebug \
-              --stacktrace
-
-          elif [ -f "$PROJECT_DIR/gradle/wrapper/gradle-wrapper.properties" ]; then
-            echo "Gradle wrapper script missing."
-            exit 1
-
-          else
-            echo "Gradle wrapper not found."
-            echo "Waiting for project inspection."
-            exit 1
-          fi
-
-      - name: Find APK
-        run: |
-          set -e
-
-          APK=$(find "$PROJECT_DIR" \
-            -type f \
-            -path "*/build/outputs/apk/debug/*.apk" \
-            | head -n 1)
-
-          if [ -z "$APK" ]; then
-            echo "ERROR: APK not generated"
-            exit 1
-          fi
-
-          mkdir -p output
-          cp "$APK" output/Driver-Pro.apk
-
-      - name: Upload Driver Pro APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Driver-Pro-APK
-          path: output/Driver-Pro.apk
+          path: extracted/**/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 30
