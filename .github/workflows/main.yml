@@ -6,8 +6,12 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   build:
+    name: Créer une APK
     runs-on: ubuntu-24.04
 
     steps:
@@ -19,56 +23,87 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Extract Driver Pro project
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Find and extract Driver Pro ZIP
         run: |
           set -e
-          ZIP=$(find . -maxdepth 2 -name "DriverPro_V3.6_Review_Fixes.zip" | head -n 1)
+
+          ZIP=$(find . -maxdepth 2 -type f -iname "*.zip" | head -n 1)
+
           if [ -z "$ZIP" ]; then
-            echo "ERROR: Driver Pro ZIP not found"
+            echo "ERROR: No ZIP file found in repository root."
             exit 1
           fi
+
+          echo "ZIP found: $ZIP"
+
           mkdir -p extracted
           unzip -q "$ZIP" -d extracted
 
       - name: Locate Android project
         run: |
           set -e
-          APP=$(find extracted -type f \( -name "build.gradle" -o -name "build.gradle.kts" \) | grep '/app/' | head -n 1)
 
-          if [ -z "$APP" ]; then
-            echo "ERROR: app/build.gradle not found"
+          GRADLE_FILE=$(find extracted -type f \( \
+            -name "build.gradle" -o \
+            -name "build.gradle.kts" \
+          \) | grep '/app/' | head -n 1)
+
+          if [ -z "$GRADLE_FILE" ]; then
+            echo "ERROR: Android app Gradle file not found."
+            echo "Extracted files:"
+            find extracted -maxdepth 4 -type f | head -n 100
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$(dirname "$APP")")
-          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+          PROJECT_DIR=$(dirname "$(dirname "$GRADLE_FILE")")
 
-          echo "Project found: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Build APK
+          echo "Android project: $PROJECT_DIR"
+
+      - name: Build Driver Pro APK
         run: |
           set -e
+
           if [ -f "$PROJECT_DIR/gradlew" ]; then
             chmod +x "$PROJECT_DIR/gradlew"
-            "$PROJECT_DIR/gradlew" -p "$PROJECT_DIR" assembleDebug
+            "$PROJECT_DIR/gradlew" \
+              -p "$PROJECT_DIR" \
+              assembleDebug \
+              --stacktrace
           else
-            gradle -p "$PROJECT_DIR" assembleDebug
+            echo "ERROR: Gradle wrapper not found."
+            exit 1
           fi
 
       - name: Prepare APK
         run: |
           set -e
+
           mkdir -p output
-          APK=$(find "$PROJECT_DIR" -type f -name "*.apk" | grep "/debug/" | head -n 1)
+
+          APK=$(find "$PROJECT_DIR" \
+            -type f \
+            -path "*/build/outputs/apk/debug/*.apk" \
+            | head -n 1)
+
           if [ -z "$APK" ]; then
-            echo "ERROR: APK not generated"
+            echo "ERROR: APK was not generated."
             exit 1
           fi
+
           cp "$APK" output/Driver-Pro.apk
+
+          echo "APK successfully prepared."
 
       - name: Upload Driver Pro APK
         uses: actions/upload-artifact@v4
@@ -76,3 +111,4 @@ jobs:
           name: Driver-Pro-APK
           path: output/Driver-Pro.apk
           if-no-files-found: error
+          retention-days: 30
